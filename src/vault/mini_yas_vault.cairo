@@ -538,7 +538,7 @@ mod MiniYasVault {
             // ERROR: Check for zero shares.
             assert(shares > 0, Errors::CANT_MINT_ZERO);
 
-            // Payer is always the payer of the tokens.
+            // Payer is always msg.sender
             let caller = get_caller_address();
 
             let (amount_0, amount_1) = self
