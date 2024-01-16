@@ -400,17 +400,18 @@ mod MiniYasVault {
         /// # Implementation
         /// * IMiniYasVault
         fn get_position_amounts(self: @ContractState) -> (u256, u256) {
+            // Get the amount of liquidity we have in the YAS pool and convert to amounts
             let position_key = self.get_position_key();
-
             let liquidity = self.yas_pool.read().get_position(position_key).liquidity;
 
-            (10, 10)
-        //LiquidityAmounts::get_amounts_for_liquidity(
-        //    self.get_slot_0().sqrt_price_X96,
-        //    get_sqrt_ratio_at_tick(position_key.tick_lower),
-        //    get_sqrt_ratio_at_tick(position_key.tick_upper),
-        //    liquidity,
-        //)
+            // TODO
+            //LiquidityAmounts::get_amounts_for_liquidity(
+            //    self.get_slot_0().sqrt_price_X96,
+            //    get_sqrt_ratio_at_tick(position_key.tick_lower),
+            //    get_sqrt_ratio_at_tick(position_key.tick_upper),
+            //    liquidity,
+            //)
+            (0xc0ffee, 0xc0ffee)
         }
 
         /// # Implementation
