@@ -1,0 +1,21 @@
+[package]
+name = "mini_yas_vault"
+version = "0.1.0"
+license = "AGPL-3.0-or-later"
+keywords = ["defi", "starknet", "yet-another-swap", "ALM"]
+description = "Tiny Managed vault for YAS pools"
+
+[dependencies]
+starknet = "2.4.2"
+snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry", tag = "v0.13.0" }
+yas_core = { git = "https://github.com/lambdaclass/yet-another-swap.git", rev = "f3ee03a" }
+
+[[target.starknet-contract]]
+sierra = true
+casm = true
+
+[cairo]
+sierra-replace-ids = true
+
+[tool.fmt]
+max-line-length = 100
