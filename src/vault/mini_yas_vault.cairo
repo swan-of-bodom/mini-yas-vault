@@ -57,9 +57,11 @@ trait IMiniYasVault<TContractState> {
     /// Gets the total liquidity we own in YAS pool
     fn total_liquidity(self: @TContractState) -> u128;
     /// Converts YAS liquidity to MYV shares
-    fn liquidity_for_shares(self: @TContractState, liquidity: u128) -> u128;
+    fn convert_to_shares(self: @TContractState, liquidity: u128) -> u128;
     /// Converts MYV shares to YAS liquidity
-    fn shares_for_liquidity(self: @TContractState, shares: u128) -> u128;
+    fn convert_to_assets(self: @TContractState, shares: u128) -> u128;
+    /// Helpful for calculating the liquidity to deposit
+    fn get_liquidity_amount(self: @TContractState, amount_0: u256, amount_1: u256) -> u128;
 
     /// Getter to view the total amount of underlying the vault owns (position + fees + balance)
     ///
@@ -266,9 +268,9 @@ mod MiniYasVault {
 
     #[external(v0)]
     impl MiniYasVaultImpl of super::IMiniYasVault<ContractState> {
-        // ------------------------------
-        //   Constant Functions
-        // ------------------------------
+        // ------------------------------------------------------------------------------------
+        //                                     ERC20
+        // ------------------------------------------------------------------------------------
 
         /// # Implementation
         /// * IERC20
@@ -337,6 +339,10 @@ mod MiniYasVault {
             self._approve(caller, spender, amount);
             true
         }
+
+        // ------------------------------------------------------------------------------------
+        //                                      MINI YAS VAULT
+        // ------------------------------------------------------------------------------------
 
         /// # Implementation
         /// * IMiniYasVault
@@ -483,7 +489,7 @@ mod MiniYasVault {
         /// # Implementation
         /// * IMiniYasVault
         #[inline(always)]
-        fn liquidity_for_shares(self: @ContractState, liquidity: u128) -> u128 {
+        fn convert_to_shares(self: @ContractState, liquidity: u128) -> u128 {
             let total_supply = self.total_supply.read();
 
             if total_supply.is_zero() {
@@ -499,7 +505,7 @@ mod MiniYasVault {
         /// # Implementation
         /// * IMiniYasVault
         #[inline(always)]
-        fn shares_for_liquidity(self: @ContractState, shares: u128) -> u128 {
+        fn convert_to_assets(self: @ContractState, shares: u128) -> u128 {
             let total_supply = self.total_supply.read();
 
             if total_supply.is_zero() {
@@ -509,6 +515,31 @@ mod MiniYasVault {
             shares.full_mul_div(self.total_liquidity(), total_supply)
         }
 
+        /// Useful to calculate the deposit_params
+        ///
+        /// # Implementation
+        /// * IMiniYasVault
+        fn get_liquidity_amount(self: @ContractState, amount_0: u256, amount_1: u256) -> u128 {
+            let position_key = self.get_position_key();
+
+            let liquidity = LiquidityAmounts::get_liquidity_for_amounts(
+                self.get_slot_0().sqrt_price_X96,
+                get_sqrt_ratio_at_tick(position_key.tick_lower),
+                get_sqrt_ratio_at_tick(position_key.tick_upper),
+                amount_0,
+                amount_1
+            );
+
+            // TODO return min amounts
+            //let (amount_0, amount_1) = LiquidityAmounts::get_amounts_for_liquidity(
+            //    self.get_slot_0().sqrt_price_X96,
+            //    get_sqrt_ratio_at_tick(position_key.tick_lower),
+            //    get_sqrt_ratio_at_tick(position_key.tick_upper),
+            //    liquidity,
+            //)
+
+            liquidity // return also mins
+        }
         // ------------------------------
         //   Non-Constant Functions
         // ------------------------------
@@ -522,25 +553,19 @@ mod MiniYasVault {
         fn deposit(ref self: ContractState, deposit_params: DepositParams) -> u128 {
             self._check_and_lock(deposit_params.deadline);
 
-            // Check the maximum liquidity we can mint given deposit params.
-            let position_key = self.get_position_key();
-
-            let liquidity = LiquidityAmounts::get_liquidity_for_amounts(
-                self.get_slot_0().sqrt_price_X96,
-                get_sqrt_ratio_at_tick(position_key.tick_lower),
-                get_sqrt_ratio_at_tick(position_key.tick_upper),
-                deposit_params.amount_0,
-                deposit_params.amount_1
-            );
-
             // Calculate shares for the max liquidity given deposit params.
-            let shares = self.liquidity_for_shares(liquidity);
+            let shares = self.convert_to_shares(deposit_params.liquidity);
+
             // ERROR: Check for zero shares.
             assert(shares > 0, Errors::CANT_MINT_ZERO);
+
+            let position_key = self.get_position_key();
 
             // Payer is always msg.sender
             let caller = get_caller_address();
 
+            /// Mint liquidity at YAS pool. The recipient is always the vault and we pass
+            /// the payer (msg.sender) as data
             let (amount_0, amount_1) = self
                 .yas_pool
                 .read()
@@ -548,30 +573,35 @@ mod MiniYasVault {
                     get_contract_address(),
                     position_key.tick_lower,
                     position_key.tick_upper,
-                    liquidity,
+                    deposit_params.liquidity,
                     array![caller.into()]
                 );
 
-            // ERROR: Check for slippage.
+            /// # Error
+            /// * `INSUFFICIENT_TOKEN_0` - Check for token0 slippage.
             assert(amount_0 > deposit_params.amount_0_min, Errors::INSUFFICIENT_TOKEN_0);
+            /// # Error
+            /// * `INSUFFICIENT_TOKEN_1` - Check for token1 slippage.
             assert(amount_1 > deposit_params.amount_1_min, Errors::INSUFFICIENT_TOKEN_1);
 
-            // Mint MYV shares.
+            // Mint MYV shares to recipient.
             self._mint(deposit_params.recipient, shares);
 
-            self._unlock();
-
+            /// # Event
+            /// * Deposit
             self
                 .emit(
                     Deposit {
                         caller,
                         recipient: deposit_params.recipient,
-                        liquidity,
+                        liquidity: deposit_params.liquidity,
                         shares,
                         amount_0,
                         amount_1
                     }
                 );
+
+            self._unlock();
 
             shares
         }
@@ -585,24 +615,22 @@ mod MiniYasVault {
         fn withdraw(ref self: ContractState, withdraw_params: WithdrawParams) -> (u256, u256) {
             self._check_and_lock(withdraw_params.deadline);
 
-            // Check for allowance
+            // Get caller address and check for allowance
             let caller = get_caller_address();
-
             if caller != withdraw_params.owner {
                 self._spend_allowance(withdraw_params.owner, caller, withdraw_params.shares);
             }
 
             // Calculate YAS liquidity for the shares burnt.
-            let liquidity = self.shares_for_liquidity(withdraw_params.shares);
+            let liquidity = self.convert_to_assets(withdraw_params.shares);
             // ERROR: Check for zero liquidity.
             assert(liquidity > 0, Errors::CANT_BURN_ZERO);
-
             // Burn MYV shares.
             self._burn(withdraw_params.owner, withdraw_params.shares);
 
-            // Burn liquidity from the pool.
+            // Get position key
             let position_key = self.get_position_key();
-
+            // Burn liquidity from pool.
             let (amount_0, amount_1) = self
                 .yas_pool
                 .read()

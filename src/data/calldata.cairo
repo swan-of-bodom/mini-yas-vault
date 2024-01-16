@@ -3,16 +3,14 @@ use starknet::{ContractAddress};
 /// Deposit struct for YAS vault.
 ///
 /// # Arguments
-/// * `amount_0` - Amount of token0 to deposit.
-/// * `amount_1` - Amount of token1 to deposit.
+/// * `liquidity` - Amount of YAS liquidity to mint
 /// * `amount_0_min` - Minimum acceptable amount of token0, for slippage
 /// * `amount_1_min` - Minimum acceptable amount of token1, for slippage
 /// * `recipient` - Recipient address of vault shares
 /// * `deadline` - Timestamp deadline for the transaction.
 #[derive(Drop, Serde)]
 struct DepositParams {
-    amount_0: u256,
-    amount_1: u256,
+liquidity: u128,
     amount_0_min: u256,
     amount_1_min: u256,
     recipient: ContractAddress,
