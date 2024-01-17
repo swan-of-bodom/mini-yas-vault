@@ -81,3 +81,14 @@ mod LiquidityAmounts {
         }
     }
 }
+/// TODO
+/// Getter to view the total amount of token0 and token1 the vault has in the active position
+///
+/// # Arguments
+/// * The price of the pool as a sqrt(token1/token0) FixedType value
+///
+/// # Returns
+/// * The amount of token0 the vault owns at `sqrt_price_X96`
+/// * The amount of token1 the vault owns at `sqrt_price_X96`
+/// fn get_amounts_at_price(self: @TContractState, sqrt_price_X96: FixedType) -> (u256, u256);
+

@@ -10,7 +10,7 @@ use starknet::{ContractAddress};
 /// * `deadline` - Timestamp deadline for the transaction.
 #[derive(Drop, Serde)]
 struct DepositParams {
-liquidity: u128,
+    liquidity: u128,
     amount_0_min: u256,
     amount_1_min: u256,
     recipient: ContractAddress,

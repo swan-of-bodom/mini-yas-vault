@@ -1,5 +1,6 @@
 mod vault {
     mod mini_yas_vault;
+    mod events;
     mod errors;
 }
 
@@ -22,4 +23,5 @@ mod yas {
 
 mod token {
     mod erc20;
+    mod mock_erc20;
 }
