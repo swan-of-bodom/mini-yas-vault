@@ -35,8 +35,6 @@ trait IMiniYasVault<TContractState> {
     //                                      MINI YAS VAULT
     // ----------------------------------------------------------------------------------------
 
-    // Constant functions //
-
     /// Get the YAS pool contract address for this vault
     fn pool(self: @TContractState) -> ContractAddress;
     /// The address of the pool's token0
@@ -46,6 +44,8 @@ trait IMiniYasVault<TContractState> {
     /// The YAS pool's fee
     fn fee(self: @TContractState) -> u32;
 
+    // Keeper settings //
+
     /// The current keeper's address, managing rebalances
     fn keeper(self: @TContractState) -> ContractAddress;
     /// The current fee that the keeper receives from each compound
@@ -53,36 +53,60 @@ trait IMiniYasVault<TContractState> {
     /// The maximum possible keeper fee (10%), from collected fees
     fn MAX_KEEPER_FEE(self: @TContractState) -> u256;
 
+    // The vault position in YAS //
+
+    /// Gets the Slot0 struct from YAS pool
+    ///
+    /// # Returns
+    /// * The YAS Pool's slot0
+    fn get_slot_0(self: @TContractState) -> Slot0;
     /// Gets the current vault's position key struct from YAS pool
+    ///
+    /// # Returns
+    /// * The vault's current position key { vault_address, tick_lower, tick_upper }
     fn get_position_key(self: @TContractState) -> PositionKey;
     /// Gets the current vault's position info struct from YAS pool
+    ///
+    /// # Returns
+    /// * The vault's current position info { liquidity, fee_growth_0, fee_growth_1, token_owed_0, token_owed_1 }
     fn get_position_info(self: @TContractState) -> PositionInfo;
-    /// Gets the Slot0 struct from YAS pool
-    fn get_slot_0(self: @TContractState) -> Slot0;
+
+    // Vault position info //
 
     /// Gets the total liquidity we own in YAS pool
     fn total_liquidity(self: @TContractState) -> u128;
     /// Converts YAS liquidity to MYV shares
+    ///
+    /// # Arguments
+    /// * `liquidity` - The amount of YAS liquidity to convert to MYV shares
     fn convert_to_shares(self: @TContractState, liquidity: u128) -> u128;
     /// Converts MYV shares to YAS liquidity
+    ///
+    /// # Arguments
+    /// * `shares` - The amount of MYV shares to convert to YAS liquidity
     fn convert_to_assets(self: @TContractState, shares: u128) -> u128;
     /// Helpful for calculating the liquidity to deposit
+    ///
+    /// # Arguments
+    /// * `amount_0` - The amount of token0 to deposit
+    /// * `amount_1` - The amount of token1 to deposit
+    ///
+    /// # Returns
+    /// * The liquidity minted for amount_0 and amount_1
     fn get_liquidity_amount(self: @TContractState, amount_0: u256, amount_1: u256) -> u128;
 
-    /// Getter to view the total amount of underlying the vault owns (position + fees + balance)
+    /// Getter to view the total amount of token0 and token1 the vault owns (position + fees)
     ///
     /// # Returns
     /// * The total amount of token0 the vault owns
     /// * The total amount of token1 the vault owns
     fn get_total_amounts(self: @TContractState) -> (u256, u256);
-
     /// Getter to view the total amount of token0 and token1 the vault has in the active position
     ///
     /// # Returns
     /// * The amount of token0 the vault owns in the active position
     /// * The amount of token1 the vault owns in the active position
     fn get_position_amounts(self: @TContractState) -> (u256, u256);
-
     /// Getter to view unclaimed fees
     ///
     /// # Returns
@@ -100,7 +124,6 @@ trait IMiniYasVault<TContractState> {
     /// # Returns
     /// * The amount of shares minted
     fn deposit(ref self: TContractState, deposit_params: DepositParams) -> u128;
-
     /// Withdraws token0 and token1 and burns shares
     ///
     /// # Arguments
@@ -110,7 +133,6 @@ trait IMiniYasVault<TContractState> {
     /// * The amount of token0 received
     /// * The amount of token1 received
     fn withdraw(ref self: TContractState, withdraw_params: WithdrawParams) -> (u256, u256);
-
     /// Compounds fees and charge management fees
     ///
     /// # Returns
@@ -126,12 +148,17 @@ trait IMiniYasVault<TContractState> {
     /// # Arguments
     /// * `new_keeper` - The address of the new keeper
     fn set_new_keeper(ref self: TContractState, new_keeper: ContractAddress);
-
     /// Updates the keeper fee.
     ///
     /// # Arguments
     /// * `new_keeper_fee` - The new fee for the keeper.
     fn set_keeper_fee(ref self: TContractState, new_keeper_fee: u256);
+    /// Updates the keeper safe. Optional address for keeper to receive this pool's fees
+    ///
+    /// # Arguments
+    /// * `new_keeper_safe` - The address of the new keeper safe
+    fn set_keeper_safe(ref self: TContractState, new_keeper_safe: ContractAddress);
+
 
     // YAS //
 
@@ -174,13 +201,14 @@ mod MiniYasVault {
         Felt252TryIntoContractAddress
     };
 
-    use mini_yas_vault::vault::events::VaultEvents::{
-        Transfer, Approval, Deposit, Withdraw, NewKeeper, NewKeeperFee, PayKeeperFee, Compound
-    };
-
     // ----------------------------------------------------------------------------------------
     //                                       2. EVENTS
     // ----------------------------------------------------------------------------------------
+
+    use mini_yas_vault::vault::events::VaultEvents::{
+        Transfer, Approval, Deposit, Withdraw, NewKeeper, NewKeeperFee, PayKeeper, Compound,
+        NewKeeperSafe
+    };
 
     #[event]
     #[derive(Drop, starknet::Event)]
@@ -191,8 +219,9 @@ mod MiniYasVault {
         Withdraw: Withdraw,
         NewKeeper: NewKeeper,
         NewKeeperFee: NewKeeperFee,
-        PayKeeperFee: PayKeeperFee,
-        Compound: Compound
+        PayKeeper: PayKeeper,
+        Compound: Compound,
+        NewKeeperSafe: NewKeeperSafe
     }
 
     // ----------------------------------------------------------------------------------------
@@ -224,7 +253,9 @@ mod MiniYasVault {
         // The keeper of this vault, in charge of rebalances, compounding, etc.
         keeper: ContractAddress,
         // Fee paid to the keeper of the vault (can be 0)
-        keeper_fee: u256
+        keeper_fee: u256,
+        // Address to receive fees (can be zero)
+        keeper_safe: ContractAddress,
     }
 
     const WAD: u256 = 1_000_000_000_000_000_000;
@@ -326,7 +357,7 @@ mod MiniYasVault {
         }
 
         // ------------------------------------------------------------------------------------
-        //                                      MINI YAS VAULT
+        //                                    MINI YAS VAULT
         // ------------------------------------------------------------------------------------
 
         /// # Implementation
@@ -355,20 +386,18 @@ mod MiniYasVault {
 
         /// # Implementation
         /// * IMiniYasVault
-        fn MAX_KEEPER_FEE(self: @ContractState) -> u256 {
-            MAX_KEEPER_FEE
-        }
-
-        /// # Implementation
-        /// * IMiniYasVault
         fn keeper(self: @ContractState) -> ContractAddress {
             self.keeper.read()
         }
-
         /// # Implementation
         /// * IMiniYasVault
         fn keeper_fee(self: @ContractState) -> u256 {
             self.keeper_fee.read()
+        }
+        /// # Implementation
+        /// * IMiniYasVault
+        fn MAX_KEEPER_FEE(self: @ContractState) -> u256 {
+            MAX_KEEPER_FEE
         }
 
         /// # Implementation
@@ -560,7 +589,6 @@ mod MiniYasVault {
 
             // Payer is always msg.sender
             let caller = get_caller_address();
-
             /// Mint liquidity at YAS pool. The recipient is always the vault and we pass
             /// the payer (msg.sender) as data
             let (amount_0, amount_1) = self
@@ -615,6 +643,7 @@ mod MiniYasVault {
 
             // Get caller address and check for allowance
             let caller = get_caller_address();
+
             if caller != withdraw_params.owner {
                 self._spend_allowance(withdraw_params.owner, caller, withdraw_params.shares);
             }
@@ -623,6 +652,7 @@ mod MiniYasVault {
             let liquidity = self.convert_to_assets(withdraw_params.shares);
             // ERROR: Check for zero liquidity.
             assert(liquidity > 0, Errors::CANT_BURN_ZERO);
+
             // Burn MYV shares.
             self._burn(withdraw_params.owner, withdraw_params.shares);
 
@@ -635,7 +665,8 @@ mod MiniYasVault {
                 .read()
                 .burn(position_key.tick_lower, position_key.tick_upper, liquidity);
 
-            /// Gotta do collect here and pay assets...
+            /// TODO: Collect here and pay assets - The assets returned should be proportional
+            /// to the liquidity burnt relative to total pool liquidity + fee proportion amounts.
 
             self._unlock();
 
@@ -698,10 +729,21 @@ mod MiniYasVault {
             // TODO compute token amounts given max liquidity we can add
 
             // (amount_0, amount_1) = LiquidityAmounts::get_amounts_for_liquidity(
-            //     sqrt_price_X96, sqrt_ratio_AX96, sqrt_ratio_BX96, liquidity
+            //     sqrt_price_X96,
+            //     sqrt_ratio_AX96,
+            //     sqrt_ratio_BX96,
+            //     liquidity
             // );
 
             // Collect just enough to add liquidity again.
+
+            /// (amount_0, amount_1) = yas_pool.collect(
+            //     get_contract_address(), 
+            //     tick_lower, 
+            //     tick_upper, 
+            //     amount_0, 
+            //     amount_1
+            // );
 
             /// ------------------------------------------------------------------
             ///   Charge keeper managemnet fee on the collected tokens
@@ -784,6 +826,20 @@ mod MiniYasVault {
 
         /// # Implementation
         /// * IYASPool
+        fn set_keeper_safe(ref self: ContractState, new_keeper_safe: ContractAddress) {
+            // Only keeper.
+            self._check_keeper();
+
+            // Allow for keeper safe to be set to 0, significa mandar fees a keeper
+            let old_keeper_safe = self.keeper_safe.read();
+            self.keeper_safe.write(new_keeper_safe);
+
+            // EVENT: Log the old and the new keeper safe address.
+            self.emit(NewKeeperSafe { old_keeper_safe, new_keeper_safe });
+        }
+
+        /// # Implementation
+        /// * IYASPool
         fn yas_mint_callback(
             ref self: ContractState, amount_0_owed: u256, amount_1_owed: u256, data: Array<felt252>
         ) {
@@ -811,13 +867,19 @@ mod MiniYasVault {
         /// * `fee_token_0` - The accrued fee of token0 to be sent to the keeper
         /// * `fee_token_1` - The accrued fee of token1 to be sent to the keeper
         fn _pay_keeper_fees(ref self: ContractState, fee_token_0: u256, fee_token_1: u256) {
-            let keeper = self.keeper.read();
-            self._pay(self.token_0.read(), get_contract_address(), keeper, fee_token_0);
-            self._pay(self.token_1.read(), get_contract_address(), keeper, fee_token_1);
+            let keeper_safe = self.keeper_safe.read();
+            let recipient = if keeper_safe.is_zero() {
+                self.keeper.read()
+            } else {
+                keeper_safe
+            };
+
+            self._pay(self.token_0.read(), get_contract_address(), recipient, fee_token_0);
+            self._pay(self.token_1.read(), get_contract_address(), recipient, fee_token_1);
 
             /// # Event
             /// * PayKeeperFee
-            self.emit(PayKeeperFee { keeper, fee_token_0, fee_token_1 });
+            self.emit(PayKeeper { recipient, fee_token_0, fee_token_1 });
         }
 
         /// Internal function to transfer or pull tokens 

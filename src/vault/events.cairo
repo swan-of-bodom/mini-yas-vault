@@ -49,8 +49,8 @@ mod VaultEvents {
     }
 
     #[derive(Drop, starknet::Event)]
-    struct PayKeeperFee {
-        keeper: ContractAddress,
+    struct PayKeeper {
+        recipient: ContractAddress,
         fee_token_0: u256,
         fee_token_1: u256,
     }
@@ -60,5 +60,11 @@ mod VaultEvents {
         liquidity: u128,
         amount_0: u256,
         amount_1: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct NewKeeperSafe {
+        old_keeper_safe: ContractAddress,
+        new_keeper_safe: ContractAddress,
     }
 }

@@ -18,15 +18,6 @@ fn test_initial_deployment() {
 
     assert(pool.contract_address.is_non_zero(), 'yas_pool_is_zero');
 }
-#[test]
-fn test_initial_deployment() {
-    let factory = deploy_yas_factory();
-    let (token0, token1) = deploy_mock_tokens();
-    let pool = deploy_yas_pool(factory, token0, token1, 3000);
-
-    assert(pool.contract_address.is_non_zero(), 'yas_pool_is_zero');
-}
-
 
 fn deploy_yas_pool(
     factory: IYASFactoryDispatcher,
